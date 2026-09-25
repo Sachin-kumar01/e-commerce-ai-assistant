@@ -1,0 +1,12 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.streamlit/secrets.toml
+data/raw/
+data/processed/
+models/*.pkl
+models/*.index
+embeddings/*.pkl
+embeddings/*.index
+src/__pycache__/
