@@ -3,11 +3,31 @@ import sys
 import pandas as pd
 import streamlit as st
 
+
+# ==========================================================
+# BASE DIRECTORY
+# ==========================================================
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(BASE_DIR, "src"))
 
-from rag_chatbot import faiss_search, ask_shopping_assistant
+sys.path.append(
+    os.path.join(BASE_DIR, "src")
+)
 
+
+# ==========================================================
+# IMPORT RAG / RECOMMENDATION FUNCTIONS
+# ==========================================================
+
+from rag_chatbot import (
+    faiss_search,
+    ask_shopping_assistant
+)
+
+
+# ==========================================================
+# STREAMLIT CONFIGURATION
+# ==========================================================
 
 st.set_page_config(
     page_title="E-Commerce AI Assistant",
@@ -15,9 +35,21 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🛍️ E-Commerce AI Assistant")
-st.caption("Recommendation System + Customer Segmentation + GenAI RAG")
 
+# ==========================================================
+# TITLE
+# ==========================================================
+
+st.title("🛍️ E-Commerce AI Assistant")
+
+st.caption(
+    "Recommendation System + Customer Segmentation + GenAI RAG"
+)
+
+
+# ==========================================================
+# FILE PATHS
+# ==========================================================
 
 PRODUCT_FILE = os.path.join(
     BASE_DIR,
@@ -26,12 +58,17 @@ PRODUCT_FILE = os.path.join(
     "products.csv"
 )
 
+
 SEGMENT_FILE = os.path.join(
     BASE_DIR,
     "models",
     "customer_segments.csv"
 )
 
+
+# ==========================================================
+# LOAD PRODUCTS
+# ==========================================================
 
 @st.cache_data
 def load_products():
@@ -41,30 +78,51 @@ def load_products():
 
     df = pd.read_csv(PRODUCT_FILE)
 
+    # Product ID
     if "product_id" in df.columns:
-        df["product_id"] = df["product_id"].astype(str)
 
+        df["product_id"] = (
+            df["product_id"]
+            .astype(str)
+        )
+
+    # Product Category
     if "product_category" in df.columns:
+
         df["product_category"] = (
             df["product_category"]
             .fillna("")
             .astype(str)
         )
 
+    # Unit Price
     if "unit_price" in df.columns:
-        df["unit_price"] = pd.to_numeric(
-            df["unit_price"],
-            errors="coerce"
-        ).fillna(0)
 
+        df["unit_price"] = (
+            pd.to_numeric(
+                df["unit_price"],
+                errors="coerce"
+            )
+            .fillna(0)
+        )
+
+    # Rating
     if "rating" in df.columns:
-        df["rating"] = pd.to_numeric(
-            df["rating"],
-            errors="coerce"
-        ).fillna(0)
+
+        df["rating"] = (
+            pd.to_numeric(
+                df["rating"],
+                errors="coerce"
+            )
+            .fillna(0)
+        )
 
     return df
 
+
+# ==========================================================
+# LOAD CUSTOMER SEGMENTS
+# ==========================================================
 
 @st.cache_data
 def load_segments():
@@ -75,9 +133,18 @@ def load_segments():
     return pd.read_csv(SEGMENT_FILE)
 
 
+# ==========================================================
+# LOAD DATA
+# ==========================================================
+
 products = load_products()
+
 segments = load_segments()
 
+
+# ==========================================================
+# SIDEBAR NAVIGATION
+# ==========================================================
 
 page = st.sidebar.radio(
     "Go to",
@@ -98,28 +165,63 @@ if page == "📊 Dashboard":
 
     st.header("📊 E-Commerce Dashboard")
 
+    # ------------------------------------------------------
+    # CHECK PRODUCTS
+    # ------------------------------------------------------
+
     if products.empty:
 
-        st.error("products.csv not found.")
+        st.error(
+            "products.csv not found."
+        )
 
     else:
 
+        # --------------------------------------------------
+        # BASIC METRICS
+        # --------------------------------------------------
+
         total_products = len(products)
 
+        # Total Customers
         if "customer_id" in segments.columns:
-            total_customers = segments["customer_id"].nunique()
+
+            total_customers = (
+                segments["customer_id"]
+                .nunique()
+            )
+
         else:
+
             total_customers = 0
 
+        # Average Rating
         if "rating" in products.columns:
-            avg_rating = products["rating"].mean()
+
+            avg_rating = (
+                products["rating"]
+                .mean()
+            )
+
         else:
+
             avg_rating = 0
 
+        # Average Price
         if "unit_price" in products.columns:
-            avg_price = products["unit_price"].mean()
+
+            avg_price = (
+                products["unit_price"]
+                .mean()
+            )
+
         else:
+
             avg_price = 0
+
+        # --------------------------------------------------
+        # METRIC CARDS
+        # --------------------------------------------------
 
         col1, col2, col3, col4 = st.columns(4)
 
@@ -145,7 +247,13 @@ if page == "📊 Dashboard":
 
         st.divider()
 
-        st.subheader("Top Product Categories")
+        # --------------------------------------------------
+        # TOP PRODUCT CATEGORIES
+        # --------------------------------------------------
+
+        st.subheader(
+            "Top Product Categories"
+        )
 
         if "product_category" in products.columns:
 
@@ -157,11 +265,36 @@ if page == "📊 Dashboard":
                 .reset_index(name="products")
             )
 
+            # ------------------------------------------------
+            # FIX:
+            # Convert numeric category codes into readable
+            # labels such as Category 0, Category 1, etc.
+            # ------------------------------------------------
+
+            category_df["product_category"] = (
+                "Category "
+                + category_df["product_category"].astype(str)
+            )
+
+            # ------------------------------------------------
+            # BAR CHART
+            # ------------------------------------------------
+
             st.bar_chart(
                 category_df.set_index(
                     "product_category"
                 )["products"]
             )
+
+        else:
+
+            st.info(
+                "Product category information is not available."
+            )
+
+        # --------------------------------------------------
+        # CLOUD DEPLOYMENT MESSAGE
+        # --------------------------------------------------
 
         st.info(
             "Cloud deployment uses the processed product "
@@ -175,17 +308,29 @@ if page == "📊 Dashboard":
 
 elif page == "🤖 Recommendations":
 
-    st.header("🤖 Product Recommendations")
+    st.header(
+        "🤖 Product Recommendations"
+    )
 
     st.write(
         "Select a product to find similar products."
     )
 
+    # ------------------------------------------------------
+    # CHECK PRODUCTS
+    # ------------------------------------------------------
+
     if products.empty:
 
-        st.error("products.csv not found.")
+        st.error(
+            "products.csv not found."
+        )
 
     else:
+
+        # --------------------------------------------------
+        # PRODUCT DISPLAY DATA
+        # --------------------------------------------------
 
         display_df = products[
             [
@@ -195,6 +340,10 @@ elif page == "🤖 Recommendations":
                 "rating"
             ]
         ].copy()
+
+        # --------------------------------------------------
+        # CREATE SELECTBOX LABEL
+        # --------------------------------------------------
 
         display_df["display"] = (
             display_df["product_id"].astype(str)
@@ -206,16 +355,30 @@ elif page == "🤖 Recommendations":
             .astype(str)
         )
 
+        # --------------------------------------------------
+        # PRODUCT SELECTBOX
+        # --------------------------------------------------
+
         selected = st.selectbox(
             "Select Product",
             display_df["display"].tolist()
         )
 
+        # --------------------------------------------------
+        # GET PRODUCT ID
+        # --------------------------------------------------
+
         selected_product_id = selected.split(
             " | "
         )[0]
 
-        if st.button("Get Recommendations"):
+        # --------------------------------------------------
+        # RECOMMENDATION BUTTON
+        # --------------------------------------------------
+
+        if st.button(
+            "Get Recommendations"
+        ):
 
             selected_row = display_df[
                 display_df["product_id"].astype(str)
@@ -232,6 +395,10 @@ elif page == "🤖 Recommendations":
 
                 row = selected_row.iloc[0]
 
+                # ------------------------------------------
+                # CREATE SEARCH QUERY
+                # ------------------------------------------
+
                 query = (
                     f"Product ID: {row['product_id']}. "
                     f"Category: {row['product_category']}. "
@@ -240,6 +407,10 @@ elif page == "🤖 Recommendations":
                 )
 
                 try:
+
+                    # --------------------------------------
+                    # FAISS SEARCH
+                    # --------------------------------------
 
                     results = faiss_search(
                         query,
@@ -252,6 +423,10 @@ elif page == "🤖 Recommendations":
                             results
                         )
 
+                        # ----------------------------------
+                        # REMOVE SELECTED PRODUCT
+                        # ----------------------------------
+
                         if "product_id" in rec_df.columns:
 
                             rec_df["product_id"] = (
@@ -263,6 +438,10 @@ elif page == "🤖 Recommendations":
                                 rec_df["product_id"]
                                 != selected_product_id
                             ]
+
+                        # ----------------------------------
+                        # TOP 5 RECOMMENDATIONS
+                        # ----------------------------------
 
                         rec_df = rec_df.head(5)
 
@@ -289,6 +468,10 @@ elif page == "🤖 Recommendations":
                             "No recommendations found."
                         )
 
+                    # --------------------------------------
+                    # COLLABORATIVE RECOMMENDATIONS
+                    # --------------------------------------
+
                     st.subheader(
                         "Collaborative Recommendations"
                     )
@@ -299,6 +482,10 @@ elif page == "🤖 Recommendations":
                         "recommendations are available in "
                         "the cloud."
                     )
+
+                    # --------------------------------------
+                    # HYBRID RECOMMENDATIONS
+                    # --------------------------------------
 
                     st.subheader(
                         "Hybrid Recommendations"
@@ -322,7 +509,13 @@ elif page == "🤖 Recommendations":
 
 elif page == "👥 Customer Segments":
 
-    st.header("👥 Customer Segmentation")
+    st.header(
+        "👥 Customer Segmentation"
+    )
+
+    # ------------------------------------------------------
+    # CHECK SEGMENTS FILE
+    # ------------------------------------------------------
 
     if segments.empty:
 
@@ -339,6 +532,10 @@ elif page == "👥 Customer Segments":
 
     else:
 
+        # --------------------------------------------------
+        # CUSTOMER SEGMENT DISTRIBUTION
+        # --------------------------------------------------
+
         st.subheader(
             "Customer Segment Distribution"
         )
@@ -348,6 +545,10 @@ elif page == "👥 Customer Segments":
             .value_counts()
             .sort_index()
         )
+
+        # --------------------------------------------------
+        # SEGMENT SUMMARY
+        # --------------------------------------------------
 
         st.subheader(
             "Segment Summary"
@@ -398,6 +599,10 @@ elif page == "👥 Customer Segments":
             width="stretch"
         )
 
+        # --------------------------------------------------
+        # CUSTOMER SEGMENT DATA
+        # --------------------------------------------------
+
         st.subheader(
             "Customer Segment Data"
         )
@@ -422,6 +627,10 @@ elif page == "💬 AI Shopping Assistant":
         "Ask questions about products in the catalog."
     )
 
+    # ------------------------------------------------------
+    # CHAT FORM
+    # ------------------------------------------------------
+
     with st.form(
         "shopping_assistant_form"
     ):
@@ -436,6 +645,10 @@ elif page == "💬 AI Shopping Assistant":
         submitted = st.form_submit_button(
             "Ask AI"
         )
+
+    # ------------------------------------------------------
+    # PROCESS QUESTION
+    # ------------------------------------------------------
 
     if submitted:
 
@@ -453,9 +666,17 @@ elif page == "💬 AI Shopping Assistant":
 
                 try:
 
+                    # --------------------------------------
+                    # ASK AI ASSISTANT
+                    # --------------------------------------
+
                     result = ask_shopping_assistant(
                         question.strip()
                     )
+
+                    # --------------------------------------
+                    # DICTIONARY RESPONSE
+                    # --------------------------------------
 
                     if isinstance(result, dict):
 
@@ -470,6 +691,10 @@ elif page == "💬 AI Shopping Assistant":
                             )
                         )
 
+                        # ----------------------------------
+                        # RETRIEVED SOURCES
+                        # ----------------------------------
+
                         if result.get("sources"):
 
                             st.subheader(
@@ -483,6 +708,10 @@ elif page == "💬 AI Shopping Assistant":
                                 width="stretch"
                             )
 
+                    # --------------------------------------
+                    # STRING RESPONSE
+                    # --------------------------------------
+
                     elif (
                         isinstance(result, str)
                         and result.strip()
@@ -492,7 +721,13 @@ elif page == "💬 AI Shopping Assistant":
                             "🤖 AI Answer"
                         )
 
-                        st.write(result)
+                        st.write(
+                            result
+                        )
+
+                    # --------------------------------------
+                    # EMPTY RESPONSE
+                    # --------------------------------------
 
                     else:
 
