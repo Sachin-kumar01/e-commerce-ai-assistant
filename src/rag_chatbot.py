@@ -14,9 +14,18 @@ METADATA_FILE = os.path.join(BASE_DIR, "embeddings", "product_metadata.pkl")
 VECTORIZER_FILE = os.path.join(BASE_DIR, "embeddings", "product_tfidf.pkl")
 
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+
 api_key = os.getenv("OPENROUTER_API_KEY")
+
 if not api_key:
-    raise ValueError("OPENROUTER_API_KEY is missing from .env")
+    try:
+        import streamlit as st
+        api_key = st.secrets.get("OPENROUTER_API_KEY")
+    except Exception:
+        api_key = None
+
+if not api_key:
+    raise ValueError("OPENROUTER_API_KEY is missing.")
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
