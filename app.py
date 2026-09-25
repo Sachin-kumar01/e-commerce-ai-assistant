@@ -1,22 +1,29 @@
 import os
 import sys
+import numpy as np
 import pandas as pd
 import streamlit as st
+import joblib
 
 
 # ==========================================================
 # BASE DIRECTORY
 # ==========================================================
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-sys.path.append(
-    os.path.join(BASE_DIR, "src")
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
 )
+
+SRC_DIR = os.path.join(
+    BASE_DIR,
+    "src"
+)
+
+sys.path.append(SRC_DIR)
 
 
 # ==========================================================
-# IMPORT RAG / RECOMMENDATION FUNCTIONS
+# IMPORT AI / FAISS FUNCTIONS
 # ==========================================================
 
 from rag_chatbot import (
@@ -26,7 +33,7 @@ from rag_chatbot import (
 
 
 # ==========================================================
-# STREAMLIT CONFIGURATION
+# STREAMLIT CONFIG
 # ==========================================================
 
 st.set_page_config(
@@ -40,7 +47,9 @@ st.set_page_config(
 # TITLE
 # ==========================================================
 
-st.title("🛍️ E-Commerce AI Assistant")
+st.title(
+    "🛍️ E-Commerce AI Assistant"
+)
 
 st.caption(
     "Recommendation System + Customer Segmentation + GenAI RAG"
@@ -58,11 +67,22 @@ PRODUCT_FILE = os.path.join(
     "products.csv"
 )
 
-
 SEGMENT_FILE = os.path.join(
     BASE_DIR,
     "models",
     "customer_segments.csv"
+)
+
+COLLAB_SIMILARITY_FILE = os.path.join(
+    BASE_DIR,
+    "models",
+    "collaborative_similarity.pkl"
+)
+
+COLLAB_PRODUCT_IDS_FILE = os.path.join(
+    BASE_DIR,
+    "models",
+    "collaborative_product_ids.pkl"
 )
 
 
@@ -74,9 +94,12 @@ SEGMENT_FILE = os.path.join(
 def load_products():
 
     if not os.path.exists(PRODUCT_FILE):
+
         return pd.DataFrame()
 
-    df = pd.read_csv(PRODUCT_FILE)
+    df = pd.read_csv(
+        PRODUCT_FILE
+    )
 
     # Product ID
     if "product_id" in df.columns:
@@ -86,7 +109,7 @@ def load_products():
             .astype(str)
         )
 
-    # Product Category
+    # Category
     if "product_category" in df.columns:
 
         df["product_category"] = (
@@ -95,27 +118,21 @@ def load_products():
             .astype(str)
         )
 
-    # Unit Price
+    # Price
     if "unit_price" in df.columns:
 
-        df["unit_price"] = (
-            pd.to_numeric(
-                df["unit_price"],
-                errors="coerce"
-            )
-            .fillna(0)
-        )
+        df["unit_price"] = pd.to_numeric(
+            df["unit_price"],
+            errors="coerce"
+        ).fillna(0)
 
     # Rating
     if "rating" in df.columns:
 
-        df["rating"] = (
-            pd.to_numeric(
-                df["rating"],
-                errors="coerce"
-            )
-            .fillna(0)
-        )
+        df["rating"] = pd.to_numeric(
+            df["rating"],
+            errors="coerce"
+        ).fillna(0)
 
     return df
 
@@ -127,10 +144,470 @@ def load_products():
 @st.cache_data
 def load_segments():
 
-    if not os.path.exists(SEGMENT_FILE):
+    if not os.path.exists(
+        SEGMENT_FILE
+    ):
+
         return pd.DataFrame()
 
-    return pd.read_csv(SEGMENT_FILE)
+    return pd.read_csv(
+        SEGMENT_FILE
+    )
+
+
+# ==========================================================
+# LOAD COLLABORATIVE MODEL
+# ==========================================================
+
+@st.cache_resource
+def load_collaborative_model():
+
+    if not os.path.exists(
+        COLLAB_SIMILARITY_FILE
+    ):
+
+        return None, None
+
+    if not os.path.exists(
+        COLLAB_PRODUCT_IDS_FILE
+    ):
+
+        return None, None
+
+    try:
+
+        # IMPORTANT:
+        # These files were created using joblib.dump()
+        # Therefore they must be loaded using joblib.load()
+
+        collaborative_similarity = joblib.load(
+            COLLAB_SIMILARITY_FILE
+        )
+
+        collaborative_product_ids = joblib.load(
+            COLLAB_PRODUCT_IDS_FILE
+        )
+
+        # Convert sparse matrix if necessary
+
+        if hasattr(
+            collaborative_similarity,
+            "toarray"
+        ):
+
+            collaborative_similarity = (
+                collaborative_similarity.toarray()
+            )
+
+        collaborative_similarity = np.asarray(
+            collaborative_similarity
+        )
+
+        collaborative_product_ids = [
+            str(product_id)
+            for product_id in collaborative_product_ids
+        ]
+
+        return (
+            collaborative_similarity,
+            collaborative_product_ids
+        )
+
+    except Exception as e:
+
+        st.error(
+            f"Collaborative model loading error: {e}"
+        )
+
+        return None, None
+
+
+# ==========================================================
+# COLLABORATIVE RECOMMENDATION
+# ==========================================================
+
+def get_collaborative_recommendations(
+    product_id,
+    similarity_matrix,
+    product_ids,
+    top_k=5
+):
+
+    if (
+        similarity_matrix is None
+        or product_ids is None
+    ):
+
+        return pd.DataFrame(
+            columns=[
+                "product_id",
+                "collaborative_score"
+            ]
+        )
+
+    product_id = str(
+        product_id
+    )
+
+    # Check selected product
+
+    if product_id not in product_ids:
+
+        return pd.DataFrame(
+            columns=[
+                "product_id",
+                "collaborative_score"
+            ]
+        )
+
+    # Product index
+
+    product_index = product_ids.index(
+        product_id
+    )
+
+    # Similarity scores
+
+    scores = np.asarray(
+        similarity_matrix[
+            product_index
+        ]
+    ).flatten()
+
+    # Sort highest score first
+
+    ranked_indices = np.argsort(
+        scores
+    )[::-1]
+
+    recommendations = []
+
+    for index in ranked_indices:
+
+        # Don't recommend selected product
+
+        if index == product_index:
+
+            continue
+
+        score = float(
+            scores[index]
+        )
+
+        # Ignore zero similarity
+
+        if score <= 0:
+
+            continue
+
+        recommendations.append(
+            {
+                "product_id": product_ids[index],
+                "collaborative_score": score
+            }
+        )
+
+        if len(
+            recommendations
+        ) >= top_k:
+
+            break
+
+    return pd.DataFrame(
+        recommendations
+    )
+
+
+# ==========================================================
+# NORMALIZE SCORE
+# ==========================================================
+
+def normalize_score(
+    series
+):
+
+    series = pd.to_numeric(
+        series,
+        errors="coerce"
+    ).fillna(0)
+
+    if len(series) == 0:
+
+        return series
+
+    min_value = series.min()
+
+    max_value = series.max()
+
+    if max_value == min_value:
+
+        if max_value == 0:
+
+            return pd.Series(
+                0.0,
+                index=series.index
+            )
+
+        return pd.Series(
+            1.0,
+            index=series.index
+        )
+
+    return (
+        (series - min_value)
+        /
+        (max_value - min_value)
+    )
+
+
+# ==========================================================
+# HYBRID RECOMMENDATION
+# ==========================================================
+
+def create_hybrid_recommendations(
+    content_results,
+    collaborative_results,
+    top_k=5
+):
+
+    # ------------------------------------------------------
+    # CONTENT RESULTS
+    # ------------------------------------------------------
+
+    if content_results is None:
+
+        content_results = pd.DataFrame()
+
+    else:
+
+        content_results = pd.DataFrame(
+            content_results
+        ).copy()
+
+    if not content_results.empty:
+
+        if "product_id" in content_results.columns:
+
+            content_results[
+                "product_id"
+            ] = (
+                content_results[
+                    "product_id"
+                ].astype(str)
+            )
+
+        # FAISS may return similarity
+        # or similarity_score
+
+        if "similarity_score" in (
+            content_results.columns
+        ):
+
+            content_results[
+                "content_score"
+            ] = pd.to_numeric(
+                content_results[
+                    "similarity_score"
+                ],
+                errors="coerce"
+            ).fillna(0)
+
+        elif "similarity" in (
+            content_results.columns
+        ):
+
+            content_results[
+                "content_score"
+            ] = pd.to_numeric(
+                content_results[
+                    "similarity"
+                ],
+                errors="coerce"
+            ).fillna(0)
+
+        elif "score" in (
+            content_results.columns
+        ):
+
+            content_results[
+                "content_score"
+            ] = pd.to_numeric(
+                content_results[
+                    "score"
+                ],
+                errors="coerce"
+            ).fillna(0)
+
+        else:
+
+            content_results[
+                "content_score"
+            ] = 0.0
+
+        content_results = (
+            content_results[
+                [
+                    "product_id",
+                    "content_score"
+                ]
+            ]
+        )
+
+    else:
+
+        content_results = pd.DataFrame(
+            columns=[
+                "product_id",
+                "content_score"
+            ]
+        )
+
+
+    # ------------------------------------------------------
+    # COLLABORATIVE RESULTS
+    # ------------------------------------------------------
+
+    if collaborative_results is None:
+
+        collaborative_results = pd.DataFrame()
+
+    else:
+
+        collaborative_results = (
+            pd.DataFrame(
+                collaborative_results
+            ).copy()
+        )
+
+    if not collaborative_results.empty:
+
+        collaborative_results[
+            "product_id"
+        ] = (
+            collaborative_results[
+                "product_id"
+            ].astype(str)
+        )
+
+        collaborative_results[
+            "collaborative_score"
+        ] = pd.to_numeric(
+            collaborative_results[
+                "collaborative_score"
+            ],
+            errors="coerce"
+        ).fillna(0)
+
+        collaborative_results = (
+            collaborative_results[
+                [
+                    "product_id",
+                    "collaborative_score"
+                ]
+            ]
+        )
+
+    else:
+
+        collaborative_results = pd.DataFrame(
+            columns=[
+                "product_id",
+                "collaborative_score"
+            ]
+        )
+
+
+    # ------------------------------------------------------
+    # MERGE
+    # ------------------------------------------------------
+
+    hybrid = pd.merge(
+        content_results,
+        collaborative_results,
+        on="product_id",
+        how="outer"
+    )
+
+    if hybrid.empty:
+
+        return hybrid
+
+
+    # ------------------------------------------------------
+    # FILL MISSING SCORES
+    # ------------------------------------------------------
+
+    hybrid[
+        "content_score"
+    ] = hybrid[
+        "content_score"
+    ].fillna(0)
+
+    hybrid[
+        "collaborative_score"
+    ] = hybrid[
+        "collaborative_score"
+    ].fillna(0)
+
+
+    # ------------------------------------------------------
+    # NORMALIZE
+    # ------------------------------------------------------
+
+    hybrid[
+        "content_normalized"
+    ] = normalize_score(
+        hybrid[
+            "content_score"
+        ]
+    )
+
+    hybrid[
+        "collaborative_normalized"
+    ] = normalize_score(
+        hybrid[
+            "collaborative_score"
+        ]
+    )
+
+
+    # ------------------------------------------------------
+    # HYBRID SCORE
+    #
+    # 60% Content-Based
+    # 40% Collaborative
+    # ------------------------------------------------------
+
+    hybrid[
+        "hybrid_score"
+    ] = (
+        0.6
+        * hybrid[
+            "content_normalized"
+        ]
+        +
+        0.4
+        * hybrid[
+            "collaborative_normalized"
+        ]
+    )
+
+
+    # ------------------------------------------------------
+    # SORT
+    # ------------------------------------------------------
+
+    hybrid = (
+        hybrid
+        .sort_values(
+            "hybrid_score",
+            ascending=False
+        )
+        .head(top_k)
+    )
+
+
+    return hybrid
 
 
 # ==========================================================
@@ -141,10 +618,19 @@ products = load_products()
 
 segments = load_segments()
 
+(
+    collaborative_similarity,
+    collaborative_product_ids
+) = load_collaborative_model()
+
 
 # ==========================================================
-# SIDEBAR NAVIGATION
+# SIDEBAR
 # ==========================================================
+
+st.sidebar.title(
+    "Navigation"
+)
 
 page = st.sidebar.radio(
     "Go to",
@@ -163,11 +649,9 @@ page = st.sidebar.radio(
 
 if page == "📊 Dashboard":
 
-    st.header("📊 E-Commerce Dashboard")
-
-    # ------------------------------------------------------
-    # CHECK PRODUCTS
-    # ------------------------------------------------------
+    st.header(
+        "📊 E-Commerce Dashboard"
+    )
 
     if products.empty:
 
@@ -177,53 +661,76 @@ if page == "📊 Dashboard":
 
     else:
 
-        # --------------------------------------------------
-        # BASIC METRICS
-        # --------------------------------------------------
+        # ----------------------------------------------
+        # CUSTOMERS
+        # ----------------------------------------------
 
-        total_products = len(products)
-
-        # Total Customers
-        if "customer_id" in segments.columns:
+        if (
+            not segments.empty
+            and "customer_id" in segments.columns
+        ):
 
             total_customers = (
-                segments["customer_id"]
-                .nunique()
+                segments[
+                    "customer_id"
+                ].nunique()
             )
 
         else:
 
             total_customers = 0
 
-        # Average Rating
+
+        # ----------------------------------------------
+        # PRODUCTS
+        # ----------------------------------------------
+
+        total_products = len(
+            products
+        )
+
+
+        # ----------------------------------------------
+        # AVG RATING
+        # ----------------------------------------------
+
         if "rating" in products.columns:
 
             avg_rating = (
-                products["rating"]
-                .mean()
+                products[
+                    "rating"
+                ].mean()
             )
 
         else:
 
             avg_rating = 0
 
-        # Average Price
+
+        # ----------------------------------------------
+        # AVG PRICE
+        # ----------------------------------------------
+
         if "unit_price" in products.columns:
 
             avg_price = (
-                products["unit_price"]
-                .mean()
+                products[
+                    "unit_price"
+                ].mean()
             )
 
         else:
 
             avg_price = 0
 
-        # --------------------------------------------------
-        # METRIC CARDS
-        # --------------------------------------------------
 
-        col1, col2, col3, col4 = st.columns(4)
+        # ----------------------------------------------
+        # METRICS
+        # ----------------------------------------------
+
+        col1, col2, col3, col4 = (
+            st.columns(4)
+        )
 
         col1.metric(
             "Customers",
@@ -245,60 +752,65 @@ if page == "📊 Dashboard":
             f"₹ {avg_price:,.2f}"
         )
 
+
         st.divider()
 
-        # --------------------------------------------------
-        # TOP PRODUCT CATEGORIES
-        # --------------------------------------------------
+
+        # ----------------------------------------------
+        # CATEGORY CHART
+        # ----------------------------------------------
 
         st.subheader(
             "Top Product Categories"
         )
 
-        if "product_category" in products.columns:
+        if "product_category" in (
+            products.columns
+        ):
 
             category_df = (
-                products["product_category"]
+                products[
+                    "product_category"
+                ]
                 .value_counts()
                 .head(10)
-                .rename_axis("product_category")
-                .reset_index(name="products")
+                .rename_axis(
+                    "product_category"
+                )
+                .reset_index(
+                    name="products"
+                )
             )
 
-            # ------------------------------------------------
-            # FIX:
-            # Convert numeric category codes into readable
-            # labels such as Category 0, Category 1, etc.
-            # ------------------------------------------------
-
-            category_df["product_category"] = (
+            category_df[
+                "product_category"
+            ] = (
                 "Category "
-                + category_df["product_category"].astype(str)
+                +
+                category_df[
+                    "product_category"
+                ].astype(str)
             )
-
-            # ------------------------------------------------
-            # BAR CHART
-            # ------------------------------------------------
 
             st.bar_chart(
                 category_df.set_index(
                     "product_category"
-                )["products"]
+                )[
+                    "products"
+                ]
             )
 
         else:
 
             st.info(
-                "Product category information is not available."
+                "No category data available."
             )
 
-        # --------------------------------------------------
-        # CLOUD DEPLOYMENT MESSAGE
-        # --------------------------------------------------
 
         st.info(
-            "Cloud deployment uses the processed product "
-            "catalog instead of the local MySQL database."
+            "Cloud deployment uses the processed "
+            "product catalog instead of the local "
+            "MySQL database."
         )
 
 
@@ -313,12 +825,11 @@ elif page == "🤖 Recommendations":
     )
 
     st.write(
-        "Select a product to find similar products."
+        "Select a product to find similar products "
+        "using Content-Based, Collaborative and "
+        "Hybrid recommendation models."
     )
 
-    # ------------------------------------------------------
-    # CHECK PRODUCTS
-    # ------------------------------------------------------
 
     if products.empty:
 
@@ -328,11 +839,11 @@ elif page == "🤖 Recommendations":
 
     else:
 
-        # --------------------------------------------------
-        # PRODUCT DISPLAY DATA
-        # --------------------------------------------------
+        # ----------------------------------------------
+        # PRODUCT DISPLAY
+        # ----------------------------------------------
 
-        display_df = products[
+        product_df = products[
             [
                 "product_id",
                 "product_category",
@@ -341,49 +852,63 @@ elif page == "🤖 Recommendations":
             ]
         ].copy()
 
-        # --------------------------------------------------
-        # CREATE SELECTBOX LABEL
-        # --------------------------------------------------
 
-        display_df["display"] = (
-            display_df["product_id"].astype(str)
-            + " | Category "
-            + display_df["product_category"].astype(str)
-            + " | ₹"
-            + display_df["unit_price"]
-            .round(2)
-            .astype(str)
+        product_df[
+            "display"
+        ] = (
+            product_df[
+                "product_id"
+            ].astype(str)
+            +
+            " | Category "
+            +
+            product_df[
+                "product_category"
+            ].astype(str)
+            +
+            " | ₹"
+            +
+            product_df[
+                "unit_price"
+            ].round(2).astype(str)
         )
 
-        # --------------------------------------------------
-        # PRODUCT SELECTBOX
-        # --------------------------------------------------
+
+        # ----------------------------------------------
+        # SELECT PRODUCT
+        # ----------------------------------------------
 
         selected = st.selectbox(
             "Select Product",
-            display_df["display"].tolist()
+            product_df[
+                "display"
+            ].tolist()
         )
 
-        # --------------------------------------------------
-        # GET PRODUCT ID
-        # --------------------------------------------------
 
-        selected_product_id = selected.split(
-            " | "
-        )[0]
+        selected_product_id = (
+            selected.split(
+                " | "
+            )[0]
+        )
 
-        # --------------------------------------------------
-        # RECOMMENDATION BUTTON
-        # --------------------------------------------------
+
+        # ----------------------------------------------
+        # BUTTON
+        # ----------------------------------------------
 
         if st.button(
             "Get Recommendations"
         ):
 
-            selected_row = display_df[
-                display_df["product_id"].astype(str)
-                == selected_product_id
+            selected_row = product_df[
+                product_df[
+                    "product_id"
+                ].astype(str)
+                ==
+                selected_product_id
             ]
+
 
             if selected_row.empty:
 
@@ -395,111 +920,276 @@ elif page == "🤖 Recommendations":
 
                 row = selected_row.iloc[0]
 
-                # ------------------------------------------
-                # CREATE SEARCH QUERY
-                # ------------------------------------------
 
-                query = (
-                    f"Product ID: {row['product_id']}. "
-                    f"Category: {row['product_category']}. "
-                    f"Price: {row['unit_price']}. "
-                    f"Rating: {row['rating']}"
-                )
+                # ==================================================
+                # CONTENT-BASED USING FAISS
+                # ==================================================
 
                 try:
 
-                    # --------------------------------------
-                    # FAISS SEARCH
-                    # --------------------------------------
+                    query = (
+                        f"Product ID: "
+                        f"{row['product_id']}. "
+                        f"Category: "
+                        f"{row['product_category']}. "
+                        f"Price: "
+                        f"{row['unit_price']}. "
+                        f"Rating: "
+                        f"{row['rating']}"
+                    )
 
-                    results = faiss_search(
+
+                    content_results = faiss_search(
                         query,
                         top_k=10
                     )
 
-                    if results:
 
-                        rec_df = pd.DataFrame(
-                            results
+                    content_results = pd.DataFrame(
+                        content_results
+                    )
+
+
+                    if not content_results.empty:
+
+                        if "product_id" in (
+                            content_results.columns
+                        ):
+
+                            content_results[
+                                "product_id"
+                            ] = (
+                                content_results[
+                                    "product_id"
+                                ].astype(str)
+                            )
+
+
+                            # Remove selected product
+
+                            content_results = (
+                                content_results[
+                                    content_results[
+                                        "product_id"
+                                    ]
+                                    !=
+                                    selected_product_id
+                                ]
+                            )
+
+
+                        content_results = (
+                            content_results.head(5)
                         )
 
-                        # ----------------------------------
-                        # REMOVE SELECTED PRODUCT
-                        # ----------------------------------
 
-                        if "product_id" in rec_df.columns:
+                    st.subheader(
+                        "🔎 Content-Based Recommendations"
+                    )
 
-                            rec_df["product_id"] = (
-                                rec_df["product_id"]
-                                .astype(str)
-                            )
 
-                            rec_df = rec_df[
-                                rec_df["product_id"]
-                                != selected_product_id
-                            ]
+                    if not content_results.empty:
 
-                        # ----------------------------------
-                        # TOP 5 RECOMMENDATIONS
-                        # ----------------------------------
-
-                        rec_df = rec_df.head(5)
-
-                        st.subheader(
-                            "Content-Based Recommendations"
+                        st.dataframe(
+                            content_results,
+                            width="stretch"
                         )
-
-                        if not rec_df.empty:
-
-                            st.dataframe(
-                                rec_df,
-                                width="stretch"
-                            )
-
-                        else:
-
-                            st.info(
-                                "No similar products found."
-                            )
 
                     else:
 
                         st.info(
-                            "No recommendations found."
+                            "No content-based "
+                            "recommendations found."
                         )
 
-                    # --------------------------------------
-                    # COLLABORATIVE RECOMMENDATIONS
-                    # --------------------------------------
-
-                    st.subheader(
-                        "Collaborative Recommendations"
-                    )
-
-                    st.info(
-                        "Collaborative model artifacts are "
-                        "not deployed. FAISS content-based "
-                        "recommendations are available in "
-                        "the cloud."
-                    )
-
-                    # --------------------------------------
-                    # HYBRID RECOMMENDATIONS
-                    # --------------------------------------
-
-                    st.subheader(
-                        "Hybrid Recommendations"
-                    )
-
-                    st.info(
-                        "Hybrid recommendations require the "
-                        "collaborative model artifact."
-                    )
 
                 except Exception as e:
 
                     st.error(
-                        f"Recommendation error: {e}"
+                        f"Content recommendation error: {e}"
+                    )
+
+                    content_results = (
+                        pd.DataFrame()
+                    )
+
+
+                # ==================================================
+                # COLLABORATIVE
+                # ==================================================
+
+                st.subheader(
+                    "👥 Collaborative Recommendations"
+                )
+
+
+                collaborative_results = (
+                    get_collaborative_recommendations(
+                        selected_product_id,
+                        collaborative_similarity,
+                        collaborative_product_ids,
+                        top_k=10
+                    )
+                )
+
+
+                if not collaborative_results.empty:
+
+                    collaborative_display = (
+                        collaborative_results.merge(
+                            products[
+                                [
+                                    "product_id",
+                                    "product_category",
+                                    "unit_price",
+                                    "rating"
+                                ]
+                            ],
+                            on="product_id",
+                            how="left"
+                        )
+                    )
+
+
+                    collaborative_display = (
+                        collaborative_display[
+                            [
+                                "product_id",
+                                "product_category",
+                                "unit_price",
+                                "rating",
+                                "collaborative_score"
+                            ]
+                        ]
+                        .head(5)
+                    )
+
+
+                    collaborative_display[
+                        "collaborative_score"
+                    ] = (
+                        collaborative_display[
+                            "collaborative_score"
+                        ].round(4)
+                    )
+
+
+                    st.dataframe(
+                        collaborative_display,
+                        width="stretch"
+                    )
+
+                else:
+
+                    if (
+                        collaborative_similarity
+                        is None
+                    ):
+
+                        st.warning(
+                            "Collaborative model is "
+                            "not available. Make sure "
+                            "collaborative model files "
+                            "are present in the models folder."
+                        )
+
+                    else:
+
+                        st.info(
+                            "No collaborative "
+                            "recommendations available "
+                            "for this product."
+                        )
+
+
+                # ==================================================
+                # HYBRID
+                # ==================================================
+
+                st.subheader(
+                    "🔀 Hybrid Recommendations"
+                )
+
+
+                hybrid_results = (
+                    create_hybrid_recommendations(
+                        content_results,
+                        collaborative_results,
+                        top_k=5
+                    )
+                )
+
+
+                if not hybrid_results.empty:
+
+                    hybrid_display = (
+                        hybrid_results.merge(
+                            products[
+                                [
+                                    "product_id",
+                                    "product_category",
+                                    "unit_price",
+                                    "rating"
+                                ]
+                            ],
+                            on="product_id",
+                            how="left"
+                        )
+                    )
+
+
+                    hybrid_display = (
+                        hybrid_display[
+                            [
+                                "product_id",
+                                "product_category",
+                                "unit_price",
+                                "rating",
+                                "content_score",
+                                "collaborative_score",
+                                "hybrid_score"
+                            ]
+                        ]
+                    )
+
+
+                    hybrid_display[
+                        "content_score"
+                    ] = (
+                        hybrid_display[
+                            "content_score"
+                        ].round(4)
+                    )
+
+
+                    hybrid_display[
+                        "collaborative_score"
+                    ] = (
+                        hybrid_display[
+                            "collaborative_score"
+                        ].round(4)
+                    )
+
+
+                    hybrid_display[
+                        "hybrid_score"
+                    ] = (
+                        hybrid_display[
+                            "hybrid_score"
+                        ].round(4)
+                    )
+
+
+                    st.dataframe(
+                        hybrid_display,
+                        width="stretch"
+                    )
+
+                else:
+
+                    st.info(
+                        "No hybrid recommendations "
+                        "could be generated."
                     )
 
 
@@ -513,9 +1203,6 @@ elif page == "👥 Customer Segments":
         "👥 Customer Segmentation"
     )
 
-    # ------------------------------------------------------
-    # CHECK SEGMENTS FILE
-    # ------------------------------------------------------
 
     if segments.empty:
 
@@ -523,43 +1210,61 @@ elif page == "👥 Customer Segments":
             "customer_segments.csv not found."
         )
 
-    elif "segment" not in segments.columns:
+        st.info(
+            "Run customer segmentation first."
+        )
+
+    elif "segment" not in (
+        segments.columns
+    ):
 
         st.error(
-            "The customer_segments.csv file does not "
-            "contain a segment column."
+            "The customer_segments.csv file "
+            "does not contain a segment column."
         )
 
     else:
 
-        # --------------------------------------------------
-        # CUSTOMER SEGMENT DISTRIBUTION
-        # --------------------------------------------------
+        # ----------------------------------------------
+        # DISTRIBUTION
+        # ----------------------------------------------
 
         st.subheader(
             "Customer Segment Distribution"
         )
 
-        st.bar_chart(
-            segments["segment"]
+
+        segment_counts = (
+            segments[
+                "segment"
+            ]
             .value_counts()
             .sort_index()
         )
 
-        # --------------------------------------------------
-        # SEGMENT SUMMARY
-        # --------------------------------------------------
+
+        st.bar_chart(
+            segment_counts
+        )
+
+
+        # ----------------------------------------------
+        # SUMMARY
+        # ----------------------------------------------
 
         st.subheader(
             "Segment Summary"
         )
+
 
         if {
             "customer_id",
             "frequency",
             "monetary",
             "recency"
-        }.issubset(segments.columns):
+        }.issubset(
+            segments.columns
+        ):
 
             summary = (
                 segments
@@ -591,21 +1296,26 @@ elif page == "👥 Customer Segments":
                 segments
                 .groupby("segment")
                 .size()
-                .to_frame("customers")
+                .to_frame(
+                    "customers"
+                )
             )
+
 
         st.dataframe(
             summary,
             width="stretch"
         )
 
-        # --------------------------------------------------
-        # CUSTOMER SEGMENT DATA
-        # --------------------------------------------------
+
+        # ----------------------------------------------
+        # CUSTOMER DATA
+        # ----------------------------------------------
 
         st.subheader(
             "Customer Segment Data"
         )
+
 
         st.dataframe(
             segments,
@@ -627,9 +1337,10 @@ elif page == "💬 AI Shopping Assistant":
         "Ask questions about products in the catalog."
     )
 
-    # ------------------------------------------------------
-    # CHAT FORM
-    # ------------------------------------------------------
+
+    # ----------------------------------------------
+    # FORM
+    # ----------------------------------------------
 
     with st.form(
         "shopping_assistant_form"
@@ -642,13 +1353,15 @@ elif page == "💬 AI Shopping Assistant":
             )
         )
 
+
         submitted = st.form_submit_button(
             "Ask AI"
         )
 
-    # ------------------------------------------------------
-    # PROCESS QUESTION
-    # ------------------------------------------------------
+
+    # ----------------------------------------------
+    # PROCESS
+    # ----------------------------------------------
 
     if submitted:
 
@@ -666,23 +1379,26 @@ elif page == "💬 AI Shopping Assistant":
 
                 try:
 
-                    # --------------------------------------
-                    # ASK AI ASSISTANT
-                    # --------------------------------------
-
-                    result = ask_shopping_assistant(
-                        question.strip()
+                    result = (
+                        ask_shopping_assistant(
+                            question.strip()
+                        )
                     )
 
-                    # --------------------------------------
-                    # DICTIONARY RESPONSE
-                    # --------------------------------------
 
-                    if isinstance(result, dict):
+                    # ----------------------------------
+                    # DICTIONARY RESPONSE
+                    # ----------------------------------
+
+                    if isinstance(
+                        result,
+                        dict
+                    ):
 
                         st.subheader(
                             "🤖 AI Answer"
                         )
+
 
                         st.write(
                             result.get(
@@ -691,51 +1407,53 @@ elif page == "💬 AI Shopping Assistant":
                             )
                         )
 
-                        # ----------------------------------
-                        # RETRIEVED SOURCES
-                        # ----------------------------------
 
-                        if result.get("sources"):
+                        if result.get(
+                            "sources"
+                        ):
 
                             st.subheader(
                                 "📚 Retrieved Products"
                             )
 
+
                             st.dataframe(
                                 pd.DataFrame(
-                                    result["sources"]
+                                    result[
+                                        "sources"
+                                    ]
                                 ),
                                 width="stretch"
                             )
 
-                    # --------------------------------------
-                    # STRING RESPONSE
-                    # --------------------------------------
 
-                    elif (
-                        isinstance(result, str)
-                        and result.strip()
-                    ):
+                    # ----------------------------------
+                    # STRING RESPONSE
+                    # ----------------------------------
+
+                    elif isinstance(
+                        result,
+                        str
+                    ) and result.strip():
 
                         st.subheader(
                             "🤖 AI Answer"
                         )
 
+
                         st.write(
                             result
                         )
 
-                    # --------------------------------------
-                    # EMPTY RESPONSE
-                    # --------------------------------------
 
                     else:
 
                         st.info(
-                            "The assistant completed the "
-                            "request but did not return "
+                            "The assistant completed "
+                            "the request but did not return "
                             "displayable text."
                         )
+
 
                 except Exception as e:
 
