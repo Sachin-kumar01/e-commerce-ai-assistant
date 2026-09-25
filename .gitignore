@@ -10,4 +10,7 @@ data/processed/*
 models/*.pkl
 models/*.index
 
+!models/collaborative_similarity.pkl
+!models/collaborative_product_ids.pkl
+
 src/__pycache__/
