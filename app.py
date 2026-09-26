@@ -807,11 +807,11 @@ if page == "📊 Dashboard":
             )
 
 
-        st.info(
-            "Cloud deployment uses the processed "
-            "product catalog instead of the local "
-            "MySQL database."
-        )
+        # st.info(
+        #     "Cloud deployment uses the processed "
+        #     "product catalog instead of the local "
+        #     "MySQL database."
+        # )
 
 
 # ==========================================================
